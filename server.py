@@ -693,10 +693,16 @@ async def get_parse_job_status(job_id: str) -> Dict[str, Any]:
                                     markdown_length = len(markdown_content)
                                     
                                     from datetime import datetime
+                                    import os
+                                    from pathlib import Path
+                                    
+                                    # Create persistent output directory
+                                    output_dir = Path.home() / "landingai_ade_output"
+                                    output_dir.mkdir(exist_ok=True)
                                     
                                     # Create output filename with timestamp
                                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                                    output_file = f"/tmp/{job_id}_{timestamp}_output.md"
+                                    output_file = str(output_dir / f"{job_id}_{timestamp}_output.md")
                                     
                                     # Write markdown to file
                                     with open(output_file, 'w', encoding='utf-8') as f:
