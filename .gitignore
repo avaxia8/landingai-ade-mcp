@@ -59,9 +59,10 @@ temp/
 tmp/
 data/
 
-# Documentation files (keep only README)
+# Documentation files (keep only README and CODE_WALKTHROUGH)
 *.md
 !README.md
+!CODE_WALKTHROUGH.md
 CLAUDE.md
 DEPLOYMENT.md
 

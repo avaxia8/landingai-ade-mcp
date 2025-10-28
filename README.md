@@ -64,13 +64,6 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### Option 3: System Python (Not Recommended)
-
-⚠️ **Warning**: Installing packages globally can cause conflicts with other Python projects.
-
-```bash
-pip install fastmcp httpx pydantic python-multipart aiofiles
-```
 
 ## Configuration
 
@@ -80,8 +73,6 @@ Get your API key from [LandingAI](https://landing.ai)
 
 ```bash
 export LANDINGAI_API_KEY="your-api-key-here"
-# or
-export VISION_AGENT_API_KEY="your-api-key-here"
 ```
 
 ### Claude Desktop Configuration
@@ -135,24 +126,6 @@ export VISION_AGENT_API_KEY="your-api-key-here"
 }
 ```
 
-##### Using System Python
-
-```json
-{
-  "mcpServers": {
-    "landingai-ade-mcp": {
-      "command": "/usr/bin/python3",
-      "args": [
-        "/path/to/landingai-ade-mcp/server.py"
-      ],
-      "env": {
-        "LANDINGAI_API_KEY": "your-api-key-here",
-        "PYTHONPATH": "/path/to/landingai-ade-mcp"
-      }
-    }
-  }
-}
-```
 
 ### After Configuration
 
@@ -205,7 +178,6 @@ export VISION_AGENT_API_KEY="your-api-key-here"
 
 This means fastmcp isn't installed in the Python environment being used:
 
-- **If using system Python**: The package isn't installed globally
 - **If using virtual environment**: The config is pointing to the wrong Python
 - **Solution**: Use uv or ensure the Python path matches your environment
 
@@ -240,6 +212,53 @@ This means fastmcp isn't installed in the Python environment being used:
    ```
 
 ## Available Tools
+
+### `process_folder`
+Process all supported files in a folder - parse documents or extract structured data.
+
+**Supported formats:** 
+- Images: APNG, BMP, DCX, DDS, DIB, GD, GIF, ICNS, JP2, JPEG, JPG, PCX, PNG, PPM, PSD, TGA, TIFF, WEBP
+- Documents: PDF, DOC, DOCX, PPT, PPTX, ODP, ODT
+
+```python
+# Parse all PDFs in a folder
+result = await process_folder(
+    folder_path="/path/to/documents",
+    operation="parse",  # or "extract" for structured data
+    file_types="pdf",   # optional filter
+    model="dpt-2-latest"
+)
+
+# Extract structured data from all documents
+schema = {
+    "type": "object",
+    "properties": {
+        "invoice_number": {"type": "string"},
+        "total": {"type": "number"},
+        "date": {"type": "string"}
+    }
+}
+
+result = await process_folder(
+    folder_path="/path/to/invoices",
+    operation="extract",
+    schema=schema,
+    file_types="pdf,jpg"  # Process PDFs and images
+)
+
+# Process everything with defaults
+result = await process_folder(
+    folder_path="/path/to/mixed_documents"
+)
+```
+
+**Features:**
+- Automatic file size detection (uses direct parsing for <10MB, jobs for larger)
+- Concurrent processing with rate limiting
+- Progress tracking for long-running operations
+- Organized output in `ade_results` folder
+- Aggregated data for extraction operations
+- Continues processing even if individual files fail
 
 ### `parse_document`
 Parse documents to extract content with metadata.
@@ -310,9 +329,19 @@ status = await get_parse_job_status(job_id)
 
 # Check status
 if status["status"] == "completed":
-    results = status["data"]  # or status["output_url"] if >1MB
+    # For small files, data is included directly
+    # For large files (>1MB), data is auto-fetched from output_url
+    results = status["data"]
 elif status["status"] == "processing":
     print(f"Progress: {status['progress'] * 100:.1f}%")
+```
+
+### `download_from_url`
+Download results from a pre-signed URL (optional - only if auto-fetch fails).
+
+```python
+# Only needed if get_parse_job_status fails to auto-fetch
+results = await download_from_url(output_url)
 ```
 
 ### `list_parse_jobs`
@@ -363,6 +392,58 @@ extract_result = await extract_data(
 )
 
 print(extract_result["extraction"])
+```
+
+### Batch Processing Folders
+
+```python
+# Process an entire folder of invoices
+result = await process_folder(
+    folder_path="/path/to/invoices",
+    operation="extract",
+    schema={
+        "type": "object",
+        "properties": {
+            "invoice_no": {"type": "string"},
+            "vendor": {"type": "string"},
+            "total": {"type": "number"},
+            "line_items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "description": {"type": "string"},
+                        "amount": {"type": "number"}
+                    }
+                }
+            }
+        }
+    },
+    file_types="pdf,jpg,png"  # Process scanned and digital invoices
+)
+
+# Access results
+print(f"Processed: {result['summary']['processed']} files")
+print(f"Failed: {result['summary']['failed']} files")
+print(f"Results saved to: {result['results_path']}")
+
+# Aggregated data for all invoices
+for invoice in result.get('aggregated_data', []):
+    print(f"Invoice {invoice['invoice_no']}: ${invoice['total']}")
+```
+
+**Output Structure:**
+```
+/your_folder/
+├── documents/              # Original files
+└── ade_results/           # Processing results
+    ├── summary.json       # Overall summary
+    ├── extracted_data.json # All extracted data (for extract operation)
+    ├── invoice1_extract/
+    │   ├── data.json      # Extracted structured data
+    │   └── source.md      # Original markdown
+    └── invoice2_extract/
+        └── ...
 ```
 
 ### Processing Large Files
@@ -455,9 +536,6 @@ This server runs locally to ensure:
 - [LandingAI API Reference](https://docs.landing.ai/api-reference)
 - [Supported File Types](https://docs.landing.ai/ade/ade-file-types)
 
-## License
-
-MIT
 
 ## Support
 

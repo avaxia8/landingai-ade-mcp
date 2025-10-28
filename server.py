@@ -14,6 +14,8 @@ from pathlib import Path
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 from datetime import datetime
+import hashlib
+from collections import defaultdict
 
 # Configure logging
 logging.basicConfig(
@@ -34,9 +36,9 @@ API_BASE_URL = "https://api.va.landing.ai"
 API_BASE_URL_EU = "https://api.va.eu-west-1.landing.ai"
 
 # Get API key from environment
-API_KEY = os.environ.get("LANDINGAI_API_KEY", os.environ.get("VISION_AGENT_API_KEY"))
+API_KEY = os.environ.get("LANDINGAI_API_KEY")
 if not API_KEY:
-    logger.warning("No API key found. Set LANDINGAI_API_KEY or VISION_AGENT_API_KEY environment variable.")
+    logger.warning("No API key found. Set LANDINGAI_API_KEY environment variable.")
 
 # ============= Helper Functions =============
 
@@ -112,35 +114,16 @@ async def handle_api_response(response: httpx.Response, add_status: bool = True)
             "status_code": response.status_code
         }
 
-# ============= MCP Tools =============
+# ============= Internal API Functions =============
+# These functions contain the actual API logic and can be called by both MCP tools and process_folder
 
-@mcp.tool()
-async def parse_document(
+async def _parse_document_internal(
     document_path: Optional[str] = None,
     document_url: Optional[str] = None,
     model: Optional[str] = None,
     split: Optional[str] = None
 ) -> Dict[str, Any]:
-    """
-    Parse a document (PDF and images) and extract its content.
-    
-    Supported formats: APNG, BMP, DCX, DDS, DIB, DOC, DOCX, GD, GIF, ICNS, JP2 (JP2000), JPEG, JPG, ODP, ODT, PCX, PDF, PNG, PPT, PPTX, PPM, PSD, TGA, TIFF, WEBP
-    See full list: https://docs.landing.ai/ade/ade-file-types
-    
-    Args:
-        document_path: Path to local document file (provide this OR document_url)
-        document_url: URL of document to parse (provide this OR document_path)
-        model: Model version to use for parsing (optional, e.g., "dpt-2-latest")
-        split: Set to "page" to split document by pages (optional)
-    
-    Returns:
-        Response containing:
-        - markdown: Full document as markdown text
-        - chunks: Array of document chunks with markdown, type, id, and grounding
-        - splits: Page/section splits if requested (with page numbers and content)
-        - grounding: Location information mapping text to coordinates
-        - metadata: Processing details (filename, page_count, duration_ms, credit_usage, etc.)
-    """
+    """Internal function for document parsing - contains the actual API logic"""
     if document_path:
         logger.info(f"Parsing document: {document_path}")
     elif document_url:
@@ -154,7 +137,7 @@ async def parse_document(
     if not API_KEY:
         return {
             "status": "error",
-            "error": "API key not configured. Set LANDINGAI_API_KEY or VISION_AGENT_API_KEY environment variable."
+            "error": "API key not configured. Set LANDINGAI_API_KEY environment variable."
         }
     
     try:
@@ -237,39 +220,24 @@ async def parse_document(
             "error_type": type(e).__name__
         }
 
-
-@mcp.tool()
-async def extract_data(
-    schema: Dict[str, Any],
+async def _extract_data_internal(
+    schema: Union[Dict[str, Any], str],
     markdown: Optional[str] = None,
     markdown_url: Optional[str] = None,
     model: Optional[str] = None
 ) -> Dict[str, Any]:
-    """
-    Extract structured data from markdown content using a JSON schema.
-    
-    The schema determines what key-value pairs are extracted from the markdown.
-    
-    Args:
-        schema: JSON schema for field extraction (required). Defines what to extract.
-                Must be a valid JSON object with type definitions.
-        markdown: The markdown file path or markdown content string (provide this OR markdown_url)
-        markdown_url: URL to markdown file (provide this OR markdown)
-        model: Model version for extraction (optional, e.g., "extract-latest" for latest version)
-    
-    Returns:
-        Response with exactly these fields:
-        - extraction: Object containing the extracted key-value pairs matching your schema
-        - extraction_metadata: Object with extracted pairs and chunk references for each value
-        - metadata: Object containing:
-            - filename: Name of processed file
-            - org_id: Organization ID
-            - duration_ms: Processing time in milliseconds
-            - credit_usage: Credits consumed
-            - job_id: Unique job identifier
-            - version: API version used
-    """
+    """Internal function for data extraction - contains the actual API logic"""
     logger.info("Extracting data with provided schema")
+    
+    # Parse schema if it's a string
+    if isinstance(schema, str):
+        try:
+            schema = json.loads(schema)
+        except json.JSONDecodeError as e:
+            return {
+                "status": "error",
+                "error": f"Invalid JSON schema: {str(e)}"
+            }
     
     if not schema:
         return {
@@ -280,7 +248,7 @@ async def extract_data(
     if not API_KEY:
         return {
             "status": "error",
-            "error": "API key not configured. Set LANDINGAI_API_KEY or VISION_AGENT_API_KEY environment variable."
+            "error": "API key not configured. Set LANDINGAI_API_KEY environment variable."
         }
     
     try:
@@ -441,36 +409,14 @@ async def extract_data(
             "error_type": type(e).__name__
         }
 
-@mcp.tool()
-async def create_parse_job(
+async def _create_parse_job_internal(
     document_path: Optional[str] = None,
     document_url: Optional[str] = None,
     model: Optional[str] = None,
     split: Optional[str] = None,
     output_save_url: Optional[str] = None
 ) -> Dict[str, Any]:
-    """
-    Create a parse job for large documents (asynchronous processing).
-    
-    Use this for documents over 50MB or when you need non-blocking processing.
-    Provide either document_path (local file) or document_url.
-    
-    Supported formats: APNG, BMP, DCX, DDS, DIB, DOC, DOCX, GD, GIF, ICNS, JP2 (JP2000), JPEG, JPG, ODP, ODT, PCX, PDF, PNG, PPT, PPTX, PPM, PSD, TGA, TIFF, WEBP
-    See full list: https://docs.landing.ai/ade/ade-file-types
-    
-    Args:
-        document_path: Path to local document file (provide this OR document_url)
-        document_url: URL of document to parse (provide this OR document_url)
-        model: Model version to use for parsing (optional, e.g., "dpt-2-latest")
-        split: Set to "page" to split document by pages (optional)
-        output_save_url: URL to save output for Zero Data Retention (optional)
-    
-    Returns:
-        Response with:
-        - job_id: Unique identifier for tracking the parse job
-        - status: "success" if job created
-        - message: Helpful status message
-    """
+    """Internal function for creating parse jobs - contains the actual API logic"""
     if document_path:
         logger.info(f"Creating parse job for file: {document_path}")
     elif document_url:
@@ -484,7 +430,7 @@ async def create_parse_job(
     if not API_KEY:
         return {
             "status": "error",
-            "error": "API key not configured. Set LANDINGAI_API_KEY or VISION_AGENT_API_KEY environment variable."
+            "error": "API key not configured. Set LANDINGAI_API_KEY environment variable."
         }
     
     try:
@@ -558,6 +504,103 @@ async def create_parse_job(
             "error": str(e)
         }
 
+# ============= MCP Tools =============
+
+@mcp.tool()
+async def parse_document(
+    document_path: Optional[str] = None,
+    document_url: Optional[str] = None,
+    model: Optional[str] = None,
+    split: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Parse a document (PDF and images) and extract its content.
+    
+    Supported formats: APNG, BMP, DCX, DDS, DIB, DOC, DOCX, GD, GIF, ICNS, JP2 (JP2000), JPEG, JPG, ODP, ODT, PCX, PDF, PNG, PPT, PPTX, PPM, PSD, TGA, TIFF, WEBP
+    See full list: https://docs.landing.ai/ade/ade-file-types
+    
+    Args:
+        document_path: Path to local document file (provide this OR document_url)
+        document_url: URL of document to parse (provide this OR document_path)
+        model: Model version to use for parsing (optional, e.g., "dpt-2-latest")
+        split: Set to "page" to split document by pages (optional)
+    
+    Returns:
+        Response containing:
+        - markdown: Full document as markdown text
+        - chunks: Array of document chunks with markdown, type, id, and grounding
+        - splits: Page/section splits if requested (with page numbers and content)
+        - grounding: Location information mapping text to coordinates
+        - metadata: Processing details (filename, page_count, duration_ms, credit_usage, etc.)
+    """
+    return await _parse_document_internal(document_path, document_url, model, split)
+
+
+@mcp.tool()
+async def extract_data(
+    schema: Union[Dict[str, Any], str],
+    markdown: Optional[str] = None,
+    markdown_url: Optional[str] = None,
+    model: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Extract structured data from markdown content using a JSON schema.
+    
+    The schema determines what key-value pairs are extracted from the markdown.
+    
+    Args:
+        schema: JSON schema dict or string for field extraction (required). Defines what to extract.
+                Must be a valid JSON object with type definitions.
+        markdown: The markdown file path or markdown content string (provide this OR markdown_url)
+        markdown_url: URL to markdown file (provide this OR markdown)
+        model: Model version for extraction (optional, e.g., "extract-latest" for latest version)
+    
+    Returns:
+        Response with exactly these fields:
+        - extraction: Object containing the extracted key-value pairs matching your schema
+        - extraction_metadata: Object with extracted pairs and chunk references for each value
+        - metadata: Object containing:
+            - filename: Name of processed file
+            - org_id: Organization ID
+            - duration_ms: Processing time in milliseconds
+            - credit_usage: Credits consumed
+            - job_id: Unique job identifier
+            - version: API version used
+    """
+    return await _extract_data_internal(schema, markdown, markdown_url, model)
+
+@mcp.tool()
+async def create_parse_job(
+    document_path: Optional[str] = None,
+    document_url: Optional[str] = None,
+    model: Optional[str] = None,
+    split: Optional[str] = None,
+    output_save_url: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Create a parse job for large documents (asynchronous processing).
+    
+    Use this for documents over 50MB or when you need non-blocking processing.
+    Provide either document_path (local file) or document_url.
+    
+    Supported formats: APNG, BMP, DCX, DDS, DIB, DOC, DOCX, GD, GIF, ICNS, JP2 (JP2000), JPEG, JPG, ODP, ODT, PCX, PDF, PNG, PPT, PPTX, PPM, PSD, TGA, TIFF, WEBP
+    See full list: https://docs.landing.ai/ade/ade-file-types
+    
+    Args:
+        document_path: Path to local document file (provide this OR document_url)
+        document_url: URL of document to parse (provide this OR document_url)
+        model: Model version to use for parsing (optional, e.g., "dpt-2-latest")
+        split: Set to "page" to split document by pages (optional)
+        output_save_url: URL to save output for Zero Data Retention (optional)
+    
+    Returns:
+        Response with:
+        - job_id: Unique identifier for tracking the parse job
+        - status: "success" if job created
+        - message: Helpful status message
+    """
+    return await _create_parse_job_internal(document_path, document_url, model, split, output_save_url)
+
 @mcp.tool()
 async def get_parse_job_status(job_id: str) -> Dict[str, Any]:
     """
@@ -595,7 +638,7 @@ async def get_parse_job_status(job_id: str) -> Dict[str, Any]:
     if not API_KEY:
         return {
             "status": "error",
-            "error": "API key not configured. Set LANDINGAI_API_KEY or VISION_AGENT_API_KEY environment variable."
+            "error": "API key not configured. Set LANDINGAI_API_KEY environment variable."
         }
     
     try:
@@ -626,11 +669,15 @@ async def get_parse_job_status(job_id: str) -> Dict[str, Any]:
                 elif "output_url" in result and result["output_url"]:
                     # Results available via URL (>1MB or Zero Data Retention)
                     output_url = result["output_url"]
-                    result["_message"] = "Job completed. Fetching results from output URL..."
+                    logger.info(f"Output URL found: {output_url}")
+                    print(f"📎 Output URL: {output_url}")
+                    result["_message"] = f"Job completed. Output URL: {output_url}"
                     
                     # Try to fetch the results from the pre-signed URL
                     try:
-                        logger.info(f"Fetching results from output URL: {output_url}")
+                        logger.info(f"Fetching results from output URL...")
+                        print(f"📥 Downloading from URL...")
+                        
                         # Use a new client without auth headers for the pre-signed URL
                         async with httpx.AsyncClient(timeout=60.0) as fetch_client:
                             fetch_response = await fetch_client.get(output_url)
@@ -639,30 +686,60 @@ async def get_parse_job_status(job_id: str) -> Dict[str, Any]:
                                 # Parse the fetched data
                                 fetched_data = fetch_response.json()
                                 
-                                # Add the fetched data to the result
-                                result["data"] = fetched_data
-                                result["_message"] = "Job completed. Results fetched from output URL successfully."
-                                result["_fetch_status"] = "success"
-                                
-                                # Add summary if markdown is present
+                                # Since we're fetching from output_url, this is a large file
+                                # Save it to disk to avoid context window issues
                                 if isinstance(fetched_data, dict) and "markdown" in fetched_data:
+                                    markdown_content = fetched_data["markdown"]
+                                    markdown_length = len(markdown_content)
+                                    
+                                    from datetime import datetime
+                                    
+                                    # Create output filename with timestamp
+                                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                    output_file = f"/tmp/{job_id}_{timestamp}_output.md"
+                                    
+                                    # Write markdown to file
+                                    with open(output_file, 'w', encoding='utf-8') as f:
+                                        f.write(markdown_content)
+                                    
+                                    file_size_mb = markdown_length / (1024 * 1024)
+                                    logger.info(f"Large result saved to: {output_file} ({file_size_mb:.2f} MB)")
+                                    print(f"💾 Large result saved to: {output_file} ({file_size_mb:.2f} MB)")
+                                    
+                                    # Return file info instead of full content
+                                    result["data_file"] = output_file
+                                    result["_message"] = f"Job completed. Large results ({file_size_mb:.2f} MB) saved to: {output_file}"
+                                    result["_fetch_status"] = "success_saved_to_file"
                                     result["_summary"] = {
-                                        "markdown_length": len(fetched_data["markdown"]),
+                                        "markdown_length": markdown_length,
                                         "chunks_count": len(fetched_data.get("chunks", [])),
-                                        "has_splits": "splits" in fetched_data and bool(fetched_data["splits"])
+                                        "has_splits": "splits" in fetched_data and bool(fetched_data.get("splits")),
+                                        "file_path": output_file,
+                                        "file_size_mb": file_size_mb
                                     }
+                                    
+                                    # Include only metadata and structure info, not the large content
+                                    result["metadata"] = fetched_data.get("metadata", {})
+                                    
+                                    # Include a preview of the content (first 1000 chars)
+                                    result["preview"] = markdown_content[:1000] + "..." if markdown_length > 1000 else markdown_content
+                                else:
+                                    # No markdown or not a dict, include as-is
+                                    result["data"] = fetched_data
+                                    result["_message"] = "Job completed. Results fetched from output URL successfully."
+                                    result["_fetch_status"] = "success"
                             else:
                                 logger.warning(f"Failed to fetch from output URL: {fetch_response.status_code}")
                                 result["_message"] = f"Job completed. Results at output_url (fetch failed: {fetch_response.status_code})"
                                 result["_fetch_status"] = f"failed_{fetch_response.status_code}"
-                                result["_fetch_note"] = "Use the output_url directly to download results"
+                                result["_fetch_note"] = "Use download_from_url tool with the output_url to retry"
                                 
                     except Exception as e:
                         logger.error(f"Error fetching from output URL: {e}")
                         result["_message"] = "Job completed. Results at output_url (auto-fetch failed)"
                         result["_fetch_status"] = "error"
                         result["_fetch_error"] = str(e)
-                        result["_fetch_note"] = "Use the output_url directly to download results"
+                        result["_fetch_note"] = "Use download_from_url tool with the output_url to retry"
                 else:
                     result["_message"] = "Job completed but no data available."
                     
@@ -771,7 +848,7 @@ async def list_parse_jobs(
     if not API_KEY:
         return {
             "status": "error",
-            "error": "API key not configured. Set LANDINGAI_API_KEY or VISION_AGENT_API_KEY environment variable."
+            "error": "API key not configured. Set LANDINGAI_API_KEY environment variable."
         }
     
     try:
@@ -841,8 +918,9 @@ async def list_parse_jobs(
             "error": str(e)
         }
 
+
 @mcp.tool()
-async def download_from_url(url: str) -> Dict[str, Any]:
+async def download_from_url(url: str, save_to_file: bool = True) -> Dict[str, Any]:
     """
     Download results from a pre-signed URL (typically from completed parse jobs).
     
@@ -851,11 +929,14 @@ async def download_from_url(url: str) -> Dict[str, Any]:
     
     Args:
         url: The pre-signed URL to download from (usually from job output_url)
+        save_to_file: If True, save large results to file instead of memory (default: True)
     
     Returns:
-        The downloaded data (typically contains markdown, chunks, metadata)
+        The downloaded data or file path (for large results)
     """
     logger.info(f"Downloading from URL: {url}")
+    print(f"📎 URL: {url}")
+    print(f"📥 Downloading...")
     
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -867,7 +948,48 @@ async def download_from_url(url: str) -> Dict[str, Any]:
                     # Try to parse as JSON
                     data = response.json()
                     
-                    # Add summary information
+                    # Save markdown to file (download_from_url is typically used for large files)
+                    if save_to_file and isinstance(data, dict) and "markdown" in data:
+                        markdown_content = data["markdown"]
+                        markdown_length = len(markdown_content)
+                        
+                        # Always save to file when using download_from_url (indicates large file)
+                        if True:  # Always save since this tool is for large files from output_url
+                            from datetime import datetime
+                            import hashlib
+                            
+                            # Create a simple hash from URL for consistent naming
+                            url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            output_file = f"/tmp/download_{url_hash}_{timestamp}.md"
+                            
+                            # Write markdown to file
+                            with open(output_file, 'w', encoding='utf-8') as f:
+                                f.write(markdown_content)
+                            
+                            file_size_mb = markdown_length / (1024 * 1024)
+                            logger.info(f"Large result saved to: {output_file} ({file_size_mb:.2f} MB)")
+                            print(f"💾 Large result saved to: {output_file} ({file_size_mb:.2f} MB)")
+                            
+                            # Return file info instead of full content
+                            result = {
+                                "status": "success",
+                                "data_file": output_file,
+                                "_message": f"Large results ({file_size_mb:.2f} MB) saved to: {output_file}",
+                                "_summary": {
+                                    "markdown_length": markdown_length,
+                                    "chunks_count": len(data.get("chunks", [])),
+                                    "has_metadata": "metadata" in data,
+                                    "file_path": output_file,
+                                    "file_size_mb": file_size_mb
+                                },
+                                "metadata": data.get("metadata", {}),
+                                "preview": markdown_content[:1000] + "..." if markdown_length > 1000 else markdown_content
+                            }
+                            
+                            return result
+                    
+                    # Small enough or not markdown - include in response
                     result = {
                         "status": "success",
                         "data": data,
@@ -916,6 +1038,398 @@ async def download_from_url(url: str) -> Dict[str, Any]:
             "error_type": type(e).__name__
         }
 
+# Note: process_folder will call the existing parse_document and extract_data functions directly
+# since they are just async functions, not MCP tool decorators that prevent direct calls
+
+@mcp.tool()
+async def process_folder(
+    folder_path: str,
+    operation: str = "parse",
+    schema: Optional[Union[Dict[str, Any], str]] = None,
+    file_types: Optional[str] = None,
+    model: Optional[str] = None,
+    split: Optional[str] = None,
+    max_concurrent: int = 3,
+    save_results: bool = True
+) -> Dict[str, Any]:
+    """
+    Process all supported files in a folder - parse documents or extract structured data.
+    
+    Supported formats:
+    - Images: APNG, BMP, DCX, DDS, DIB, GD, GIF, ICNS, JP2, JPEG, JPG, PCX, PNG, PPM, PSD, TGA, TIFF, WEBP
+    - Documents: PDF, DOC, DOCX, PPT, PPTX, ODP, ODT
+    
+    Args:
+        folder_path: Path to folder containing documents
+        operation: "parse" (extract text/tables) or "extract" (extract structured data)
+        schema: JSON schema dict or string for extraction (required if operation="extract")
+        file_types: Comma-separated file extensions to process (e.g., "pdf,jpg"). None = all supported
+        model: Model version to use (optional, e.g., "dpt-2-latest")
+        split: Set to "page" to split documents by pages (optional)
+        max_concurrent: Maximum number of concurrent operations (default: 3)
+        save_results: Save results to files in ade_results folder (default: True)
+    
+    Returns:
+        Processing summary with file results, paths, and aggregated data (for extract)
+    
+    Examples:
+        # Parse all PDFs
+        await process_folder("/path/to/docs", operation="parse", file_types="pdf")
+        
+        # Extract invoice data from all documents
+        schema = {"type": "object", "properties": {"invoice_no": {"type": "string"}}}
+        await process_folder("/path/to/invoices", operation="extract", schema=schema)
+    """
+    # Validate inputs
+    if operation not in ["parse", "extract"]:
+        return {
+            "status": "error",
+            "error": "Operation must be 'parse' or 'extract'"
+        }
+    
+    if operation == "extract" and not schema:
+        return {
+            "status": "error",
+            "error": "Schema is required for extract operation"
+        }
+    
+    # Parse schema if it's a string
+    if schema and isinstance(schema, str):
+        try:
+            schema = json.loads(schema)
+        except json.JSONDecodeError as e:
+            return {
+                "status": "error",
+                "error": f"Invalid JSON schema: {str(e)}"
+            }
+    
+    folder = Path(folder_path)
+    if not folder.exists() or not folder.is_dir():
+        return {
+            "status": "error",
+            "error": f"Folder not found or not a directory: {folder_path}"
+        }
+    
+    if not API_KEY:
+        return {
+            "status": "error",
+            "error": "API key not configured. Set LANDINGAI_API_KEY environment variable."
+        }
+    
+    # Define supported extensions
+    SUPPORTED_EXTENSIONS = {
+        # Images
+        '.apng', '.bmp', '.dcx', '.dds', '.dib', '.gd', '.gif', 
+        '.icns', '.jp2', '.jpeg', '.jpg', '.pcx', '.png', '.ppm', 
+        '.psd', '.tga', '.tiff', '.tif', '.webp',
+        # Documents
+        '.pdf', '.doc', '.docx', '.ppt', '.pptx', '.odp', '.odt'
+    }
+    
+    # Filter extensions if specified
+    if file_types:
+        requested_exts = {f".{ext.lower().strip()}" for ext in file_types.split(",")}
+        allowed_exts = requested_exts & SUPPORTED_EXTENSIONS
+    else:
+        allowed_exts = SUPPORTED_EXTENSIONS
+    
+    # Find all matching files
+    all_files = []
+    for ext in allowed_exts:
+        all_files.extend(folder.glob(f"*{ext}"))
+        all_files.extend(folder.glob(f"*{ext.upper()}"))
+    
+    # Remove duplicates and sort
+    all_files = sorted(set(all_files))
+    
+    if not all_files:
+        return {
+            "status": "success",
+            "message": f"No supported files found in {folder_path}",
+            "file_types_searched": list(allowed_exts),
+            "total_files": 0
+        }
+    
+    logger.info(f"Found {len(all_files)} files to process in {folder_path}")
+    
+    # Prepare output directory if saving results
+    output_dir = None
+    if save_results:
+        output_dir = folder / "ade_results"
+        output_dir.mkdir(exist_ok=True)
+        logger.info(f"Results will be saved to: {output_dir}")
+    
+    # Track processing results
+    processed_files = []
+    failed_files = []
+    aggregated_data = [] if operation == "extract" else None
+    start_time = datetime.now()
+    
+    # Group files by size for optimal processing
+    small_files = []  # < 10MB
+    large_files = []  # >= 10MB
+    
+    for file_path in all_files:
+        size_mb = file_path.stat().st_size / (1024 * 1024)
+        if size_mb < 10:
+            small_files.append(file_path)
+        else:
+            large_files.append(file_path)
+    
+    logger.info(f"Processing {len(small_files)} small files (<10MB) and {len(large_files)} large files (>=10MB)")
+    
+    # Process small files directly in batches
+    for i in range(0, len(small_files), max_concurrent):
+        batch = small_files[i:i + max_concurrent]
+        tasks = []
+        
+        for file_path in batch:
+            if operation == "parse":
+                tasks.append(_parse_document_internal(document_path=str(file_path), model=model, split=split))
+            else:  # extract
+                # For extraction, we need to parse first then extract
+                async def parse_and_extract(fp=file_path, s=schema, m=model, sp=split):
+                    parse_result = await _parse_document_internal(document_path=str(fp), model=m, split=sp)
+                    if parse_result.get("status") == "error":
+                        return parse_result
+                    markdown = parse_result.get("markdown", "")
+                    if not markdown:
+                        return {"status": "error", "error": "No markdown content to extract from"}
+                    extract_result = await _extract_data_internal(schema=s, markdown=markdown)
+                    if extract_result.get("status") == "success":
+                        return {
+                            "status": "success",
+                            "extraction": extract_result.get("extraction"),
+                            "markdown": markdown,
+                            "metadata": parse_result.get("metadata")
+                        }
+                    return extract_result
+                tasks.append(parse_and_extract())
+        
+        # Execute batch concurrently
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Process results
+        for file_path, result in zip(batch, results):
+            if isinstance(result, Exception):
+                failed_files.append({
+                    "filename": file_path.name,
+                    "error": str(result)
+                })
+                logger.error(f"Failed to process {file_path.name}: {result}")
+            elif result.get("status") == "error":
+                failed_files.append({
+                    "filename": file_path.name,
+                    "error": result.get("error", "Unknown error")
+                })
+            else:
+                # Save results if requested
+                output_path = None
+                if save_results and output_dir:
+                    file_output_dir = output_dir / f"{file_path.stem}_{operation}"
+                    file_output_dir.mkdir(exist_ok=True)
+                    output_path = str(file_output_dir)
+                    
+                    if operation == "parse":
+                        # Save markdown content
+                        if "markdown" in result:
+                            (file_output_dir / "content.md").write_text(
+                                result["markdown"], encoding="utf-8"
+                            )
+                        # Save metadata
+                        if "metadata" in result:
+                            (file_output_dir / "metadata.json").write_text(
+                                json.dumps(result["metadata"], indent=2), encoding="utf-8"
+                            )
+                        # Save chunks if present
+                        if "chunks" in result and result["chunks"]:
+                            (file_output_dir / "chunks.json").write_text(
+                                json.dumps(result["chunks"], indent=2), encoding="utf-8"
+                            )
+                    else:  # extract
+                        # Save extracted data
+                        if "extraction" in result:
+                            (file_output_dir / "data.json").write_text(
+                                json.dumps(result["extraction"], indent=2), encoding="utf-8"
+                            )
+                            # Add to aggregated data
+                            aggregated_entry = {
+                                "source_file": file_path.name,
+                                **result["extraction"]
+                            }
+                            aggregated_data.append(aggregated_entry)
+                        # Save source markdown
+                        if "markdown" in result:
+                            (file_output_dir / "source.md").write_text(
+                                result["markdown"], encoding="utf-8"
+                            )
+                
+                processed_files.append({
+                    "filename": file_path.name,
+                    "status": "success",
+                    "pages": result.get("metadata", {}).get("page_count", 0) if operation == "parse" else None,
+                    "has_data": bool(result.get("extraction")) if operation == "extract" else None,
+                    "output_path": output_path
+                })
+    
+    # Process large files using parse jobs
+    if large_files:
+        logger.info(f"Creating parse jobs for {len(large_files)} large files")
+        jobs = []
+        
+        # Create jobs for large files
+        for file_path in large_files:
+            try:
+                job_result = await _create_parse_job_internal(
+                    document_path=str(file_path),
+                    model=model,
+                    split=split
+                )
+                if job_result.get("status") == "success":
+                    jobs.append({
+                        "file_path": file_path,
+                        "job_id": job_result["job_id"]
+                    })
+                else:
+                    failed_files.append({
+                        "filename": file_path.name,
+                        "error": job_result.get("error", "Failed to create parse job")
+                    })
+            except Exception as e:
+                failed_files.append({
+                    "filename": file_path.name,
+                    "error": str(e)
+                })
+        
+        # Monitor jobs until completion
+        if jobs:
+            logger.info(f"Monitoring {len(jobs)} parse jobs...")
+            pending_jobs = jobs.copy()
+            
+            while pending_jobs:
+                await asyncio.sleep(5)  # Check every 5 seconds
+                
+                for job in pending_jobs[:]:
+                    try:
+                        status_result = await get_parse_job_status(job["job_id"])
+                        
+                        if status_result.get("status") == "completed":
+                            pending_jobs.remove(job)
+                            
+                            # Process based on operation
+                            if operation == "extract" and status_result.get("data"):
+                                # Extract from parsed markdown
+                                markdown = status_result["data"].get("markdown", "")
+                                extract_result = await _extract_data_internal(
+                                    schema=schema,
+                                    markdown=markdown
+                                )
+                                
+                                if extract_result.get("status") == "success":
+                                    result = {
+                                        "extraction": extract_result.get("extraction"),
+                                        "markdown": markdown,
+                                        "metadata": status_result["data"].get("metadata")
+                                    }
+                                else:
+                                    result = extract_result
+                            else:
+                                result = status_result.get("data", status_result)
+                            
+                            # Save results
+                            output_path = None
+                            if save_results and output_dir:
+                                file_output_dir = output_dir / f"{job['file_path'].stem}_{operation}"
+                                file_output_dir.mkdir(exist_ok=True)
+                                output_path = str(file_output_dir)
+                                
+                                if operation == "parse" and "data_file" in status_result:
+                                    # Large file saved to disk
+                                    import shutil
+                                    shutil.copy(status_result["data_file"], file_output_dir / "content.md")
+                                elif operation == "parse" and result.get("markdown"):
+                                    (file_output_dir / "content.md").write_text(
+                                        result["markdown"], encoding="utf-8"
+                                    )
+                                elif operation == "extract" and result.get("extraction"):
+                                    (file_output_dir / "data.json").write_text(
+                                        json.dumps(result["extraction"], indent=2), encoding="utf-8"
+                                    )
+                                    aggregated_data.append({
+                                        "source_file": job["file_path"].name,
+                                        **result["extraction"]
+                                    })
+                            
+                            processed_files.append({
+                                "filename": job["file_path"].name,
+                                "status": "success",
+                                "job_id": job["job_id"],
+                                "output_path": output_path
+                            })
+                            
+                        elif status_result.get("status") == "failed":
+                            pending_jobs.remove(job)
+                            failed_files.append({
+                                "filename": job["file_path"].name,
+                                "error": status_result.get("failure_reason", "Job failed")
+                            })
+                    except Exception as e:
+                        logger.error(f"Error checking job {job['job_id']}: {e}")
+                
+                if pending_jobs:
+                    logger.info(f"Still waiting for {len(pending_jobs)} jobs to complete...")
+    
+    # Calculate summary
+    processing_time = (datetime.now() - start_time).total_seconds()
+    
+    # Save summary if requested
+    if save_results and output_dir:
+        summary = {
+            "operation": operation,
+            "timestamp": datetime.now().isoformat(),
+            "folder_path": str(folder_path),
+            "processing_time_s": processing_time,
+            "total_files": len(all_files),
+            "processed": len(processed_files),
+            "failed": len(failed_files),
+            "processed_files": processed_files,
+            "failed_files": failed_files
+        }
+        
+        if aggregated_data:
+            summary["aggregated_data"] = aggregated_data
+            # Also save aggregated data separately
+            (output_dir / "extracted_data.json").write_text(
+                json.dumps(aggregated_data, indent=2), encoding="utf-8"
+            )
+        
+        (output_dir / "summary.json").write_text(
+            json.dumps(summary, indent=2), encoding="utf-8"
+        )
+    
+    # Prepare response
+    result = {
+        "status": "success",
+        "operation": operation,
+        "summary": {
+            "total_files": len(all_files),
+            "processed": len(processed_files),
+            "failed": len(failed_files),
+            "processing_time_s": round(processing_time, 1)
+        },
+        "processed_files": processed_files,
+        "failed_files": failed_files
+    }
+    
+    if save_results and output_dir:
+        result["results_path"] = str(output_dir)
+    
+    if aggregated_data:
+        result["aggregated_data"] = aggregated_data
+    
+    return result
+
+
 @mcp.tool()
 async def health_check() -> Dict[str, Any]:
     """
@@ -937,6 +1451,7 @@ async def health_check() -> Dict[str, Any]:
             "get_parse_job_status",
             "list_parse_jobs",
             "download_from_url",
+            "process_folder",
             "health_check"
         ],
         "timestamp": datetime.now().isoformat()
