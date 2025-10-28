@@ -188,13 +188,41 @@ async def _parse_document_internal(
         result = await handle_api_response(response)
         if result.get("status") == "success":
             logger.info("Document parsed successfully")
+            
+            # Always save parsed markdown to local directory
+            if "markdown" in result:
+                from datetime import datetime
+                from pathlib import Path
+                
+                # Create persistent output directory
+                output_dir = Path.home() / "landingai_ade_output"
+                output_dir.mkdir(exist_ok=True)
+                
+                # Extract filename for naming
+                if document_path:
+                    source_filename = Path(document_path).stem
+                elif document_url:
+                    source_filename = document_url.split('/')[-1].split('?')[0].replace('.', '_')
+                else:
+                    source_filename = "unknown"
+                
+                # Create output filename with timestamp
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_file = str(output_dir / f"parse_{source_filename}_{timestamp}.md")
+                
+                # Write markdown to file
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    f.write(result["markdown"])
+                
+                logger.info(f"Parse results saved to: {output_file}")
+                result["saved_to"] = output_file
+                result["markdown_length"] = len(result["markdown"])
+            
             # Add helpful summary info
             if "chunks" in result:
                 result["chunks_count"] = len(result["chunks"])
             if "metadata" in result and "page_count" in result["metadata"]:
                 result["page_count"] = result["metadata"]["page_count"]
-            if "markdown" in result:
-                result["markdown_length"] = len(result["markdown"])
         return result
         
     except FileNotFoundError:
@@ -362,6 +390,34 @@ async def _extract_data_internal(
             # Validate expected response structure
             if all(key in result for key in ['extraction', 'extraction_metadata', 'metadata']):
                 logger.info("Data extraction successful")
+                
+                # Always save extraction results to local directory
+                from datetime import datetime
+                from pathlib import Path
+                
+                # Create persistent output directory
+                output_dir = Path.home() / "landingai_ade_output"
+                output_dir.mkdir(exist_ok=True)
+                
+                # Extract filename for naming
+                source_filename = "data"
+                if is_file:
+                    source_filename = Path(path).stem
+                elif markdown and len(markdown) < 100:
+                    # Short markdown might be a filename
+                    source_filename = markdown[:20].replace('/', '_').replace(' ', '_')
+                
+                # Create output filename with timestamp
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_file = str(output_dir / f"extract_{source_filename}_{timestamp}.json")
+                
+                # Write extraction results to file
+                import json
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    json.dump(result.get('extraction', {}), f, indent=2)
+                
+                logger.info(f"Extraction results saved to: {output_file}")
+                result["saved_to"] = output_file
                 
                 # Add helpful summary
                 extraction = result.get('extraction', {})
@@ -700,9 +756,16 @@ async def get_parse_job_status(job_id: str) -> Dict[str, Any]:
                                     output_dir = Path.home() / "landingai_ade_output"
                                     output_dir.mkdir(exist_ok=True)
                                     
+                                    # Extract original filename from metadata if available
+                                    source_filename = "document"
+                                    if "metadata" in fetched_data:
+                                        filename_meta = fetched_data["metadata"].get("filename", "")
+                                        if filename_meta:
+                                            source_filename = Path(filename_meta).stem
+                                    
                                     # Create output filename with timestamp
                                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                                    output_file = str(output_dir / f"{job_id}_{timestamp}_output.md")
+                                    output_file = str(output_dir / f"{source_filename}_{job_id}_{timestamp}.md")
                                     
                                     # Write markdown to file
                                     with open(output_file, 'w', encoding='utf-8') as f:
