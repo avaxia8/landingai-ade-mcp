@@ -68,8 +68,6 @@ pip install -r requirements.txt
 
 ### Set Your API Key
 
-Get your API key from [LandingAI](https://docs.landing.ai/ade/agentic-api-key)
-
 ```bash
 export LANDINGAI_API_KEY="your-api-key-here"
 ```
