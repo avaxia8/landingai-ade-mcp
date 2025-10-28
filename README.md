@@ -208,13 +208,6 @@ elif status["status"] == "processing":
     print(f"Progress: {status['progress'] * 100:.1f}%")
 ```
 
-### `download_from_url`
-Download results from a pre-signed URL (optional - only if auto-fetch fails).
-
-```python
-# Only needed if get_parse_job_status fails to auto-fetch
-results = await download_from_url(output_url)
-```
 
 ### `list_parse_jobs`
 List all parse jobs with filtering and pagination.

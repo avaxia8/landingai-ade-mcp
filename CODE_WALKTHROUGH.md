@@ -345,43 +345,7 @@ result["status_summary"] = status_counts
 
 ---
 
-### 6. `download_from_url` - Direct URL Download
-
-**Purpose**: Download results from pre-signed URLs, typically for large files.
-
-#### Core Logic
-```python
-print(f"📎 URL: {url}")
-print(f"📥 Downloading...")
-
-async with httpx.AsyncClient(timeout=60.0) as client:
-    response = await client.get(url)  # No auth headers!
-    
-    if response.status_code == 200:
-        data = response.json()
-        
-        # Save to file (since this tool is for large files)
-        if save_to_file and "markdown" in data:
-            output_file = f"/tmp/download_{url_hash}_{timestamp}.md"
-            
-            with open(output_file, 'w') as f:
-                f.write(data["markdown"])
-            
-            return {
-                "data_file": output_file,
-                "_message": f"Large results ({file_size_mb:.2f} MB) saved to: {output_file}",
-                "preview": markdown_content[:1000] + "..."
-            }
-```
-
-#### Design Decisions
-- **Why always save to file?** This tool is used for large files from output_url
-- **Why use URL hash in filename?** Consistent naming for same source
-- **Why no auth?** Pre-signed URLs don't need additional authentication
-
----
-
-### 7. `process_folder` - Batch Document Processing
+### 6. `process_folder` - Batch Document Processing
 
 **Purpose**: Process all supported files in a folder for parsing or structured data extraction.
 
@@ -429,12 +393,12 @@ for ext in allowed_exts:
 
 2. **Size-Based Grouping**:
 ```python
-small_files = []  # < 10MB - direct processing
-large_files = []  # >= 10MB - use jobs
+small_files = []  # < 50MB - direct processing
+large_files = []  # >= 50MB - use jobs
 
 for file in all_files:
     size_mb = file.stat().st_size / (1024 * 1024)
-    if size_mb < 10:
+    if size_mb < 50:
         small_files.append(file)
     else:
         large_files.append(file)
@@ -557,13 +521,13 @@ for result in extraction_results:
    - Covers both exploratory and production use cases
 
 2. **Why size-based grouping?**
-   - Small files (<10MB): Fast enough for direct processing
+   - Small files (<50MB): Fast enough for direct processing
    - Large files: Would timeout, need async jobs
    - Optimizes throughput vs resource usage
 
 3. **Why max_concurrent parameter?**
    - Prevents API rate limit errors
-   - Default of 3 balances speed and safety
+   - Default of 15 balances speed and safety
    - User can adjust based on their API tier
 
 4. **Why save to ade_results folder?**
@@ -641,7 +605,7 @@ result = await process_folder(
 
 ---
 
-### 8. `health_check` - Server Status
+### 7. `health_check` - Server Status
 
 **Purpose**: Verify server health and API connectivity.
 
@@ -717,3 +681,46 @@ async with httpx.AsyncClient(timeout=60.0) as fetch_client:
     # No headers parameter!
     response = await fetch_client.get(pre_signed_url)
 ```
+
+---
+
+## Internal Functions Architecture
+
+### Why Internal Functions?
+
+The FastMCP framework replaces MCP-decorated functions with FunctionTool objects that cannot be called directly from within Python code. To solve this, the codebase uses a pattern where:
+
+1. **Internal functions** (`_parse_document_internal`, `_extract_data_internal`, `_create_parse_job_internal`) contain all the actual API logic
+2. **MCP tools** are thin wrappers that just call the internal functions
+3. **process_folder** calls the internal functions directly, avoiding FunctionTool issues
+
+### Internal Function List
+
+- `_parse_document_internal()` - Document parsing logic
+- `_extract_data_internal()` - Data extraction logic  
+- `_create_parse_job_internal()` - Job creation logic
+
+### Benefits
+
+- **No code duplication** - Logic exists in one place
+- **Testability** - Internal functions can be tested independently
+- **Flexibility** - Any function can call internal functions
+- **Clean separation** - API logic separated from MCP interface
+
+## Key Insights
+
+1. **Context Window Management**: The server automatically detects large responses and saves them to files, preventing Claude's context window from being overwhelmed.
+
+2. **Progressive Disclosure**: Tools provide summaries and previews before full data, letting users decide what to access.
+
+3. **Fail-Safe Design**: When auto-fetch fails, the tool still returns the URL so users can access results manually.
+
+4. **Transparency**: URLs and file paths are printed for visibility, making the process debuggable.
+
+5. **Smart Detection**: The server intelligently detects whether inputs are file paths or content strings, improving usability.
+
+6. **S3 Authentication**: Understanding that pre-signed URLs include auth in the URL itself is crucial for successful downloads.
+
+7. **Internal Functions Pattern**: Solves the FunctionTool wrapper issue by separating API logic from MCP decorators.
+
+This architecture ensures reliable document processing while managing memory efficiently and providing clear feedback throughout the process.

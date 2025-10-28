@@ -732,7 +732,7 @@ async def get_parse_job_status(job_id: str) -> Dict[str, Any]:
                                 logger.warning(f"Failed to fetch from output URL: {fetch_response.status_code}")
                                 result["_message"] = f"Job completed. Results at output_url (fetch failed: {fetch_response.status_code})"
                                 result["_fetch_status"] = f"failed_{fetch_response.status_code}"
-                                result["_fetch_note"] = "Use download_from_url tool with the output_url to retry"
+                                result["_fetch_note"] = "Results are available at the output_url"
                                 
                     except Exception as e:
                         logger.error(f"Error fetching from output URL: {e}")
@@ -919,125 +919,6 @@ async def list_parse_jobs(
         }
 
 
-@mcp.tool()
-async def download_from_url(url: str, save_to_file: bool = True) -> Dict[str, Any]:
-    """
-    Download results from a pre-signed URL (typically from completed parse jobs).
-    
-    This is useful when you have an output_url from a completed job and want to 
-    fetch the results separately, or if auto-fetch failed.
-    
-    Args:
-        url: The pre-signed URL to download from (usually from job output_url)
-        save_to_file: If True, save large results to file instead of memory (default: True)
-    
-    Returns:
-        The downloaded data or file path (for large results)
-    """
-    logger.info(f"Downloading from URL: {url}")
-    print(f"📎 URL: {url}")
-    print(f"📥 Downloading...")
-    
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            # Don't use auth headers for pre-signed URLs
-            response = await client.get(url)
-            
-            if response.status_code == 200:
-                try:
-                    # Try to parse as JSON
-                    data = response.json()
-                    
-                    # Save markdown to file (download_from_url is typically used for large files)
-                    if save_to_file and isinstance(data, dict) and "markdown" in data:
-                        markdown_content = data["markdown"]
-                        markdown_length = len(markdown_content)
-                        
-                        # Always save to file when using download_from_url (indicates large file)
-                        if True:  # Always save since this tool is for large files from output_url
-                            from datetime import datetime
-                            import hashlib
-                            
-                            # Create a simple hash from URL for consistent naming
-                            url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
-                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            output_file = f"/tmp/download_{url_hash}_{timestamp}.md"
-                            
-                            # Write markdown to file
-                            with open(output_file, 'w', encoding='utf-8') as f:
-                                f.write(markdown_content)
-                            
-                            file_size_mb = markdown_length / (1024 * 1024)
-                            logger.info(f"Large result saved to: {output_file} ({file_size_mb:.2f} MB)")
-                            print(f"💾 Large result saved to: {output_file} ({file_size_mb:.2f} MB)")
-                            
-                            # Return file info instead of full content
-                            result = {
-                                "status": "success",
-                                "data_file": output_file,
-                                "_message": f"Large results ({file_size_mb:.2f} MB) saved to: {output_file}",
-                                "_summary": {
-                                    "markdown_length": markdown_length,
-                                    "chunks_count": len(data.get("chunks", [])),
-                                    "has_metadata": "metadata" in data,
-                                    "file_path": output_file,
-                                    "file_size_mb": file_size_mb
-                                },
-                                "metadata": data.get("metadata", {}),
-                                "preview": markdown_content[:1000] + "..." if markdown_length > 1000 else markdown_content
-                            }
-                            
-                            return result
-                    
-                    # Small enough or not markdown - include in response
-                    result = {
-                        "status": "success",
-                        "data": data,
-                        "_message": "Successfully downloaded and parsed data"
-                    }
-                    
-                    # Add summary if it's parse results
-                    if isinstance(data, dict):
-                        if "markdown" in data:
-                            result["_summary"] = {
-                                "markdown_length": len(data["markdown"]),
-                                "chunks_count": len(data.get("chunks", [])) if "chunks" in data else 0,
-                                "has_metadata": "metadata" in data
-                            }
-                        result["_keys_found"] = list(data.keys())
-                    
-                    return result
-                    
-                except json.JSONDecodeError:
-                    # Return raw content if not JSON
-                    return {
-                        "status": "success",
-                        "content": response.text[:10000],  # Limit to first 10k chars
-                        "content_type": response.headers.get("content-type", "unknown"),
-                        "_message": "Downloaded non-JSON content (showing first 10k chars)",
-                        "_full_length": len(response.text)
-                    }
-            else:
-                return {
-                    "status": "error",
-                    "error": f"Failed to download: HTTP {response.status_code}",
-                    "status_code": response.status_code,
-                    "response": response.text[:500] if response.text else None
-                }
-                
-    except httpx.TimeoutException:
-        return {
-            "status": "error",
-            "error": "Download timeout after 60 seconds"
-        }
-    except Exception as e:
-        logger.error(f"Error downloading from URL: {e}")
-        return {
-            "status": "error",
-            "error": str(e),
-            "error_type": type(e).__name__
-        }
-
 # Note: process_folder will call the existing parse_document and extract_data functions directly
 # since they are just async functions, not MCP tool decorators that prevent direct calls
 
@@ -1049,7 +930,7 @@ async def process_folder(
     file_types: Optional[str] = None,
     model: Optional[str] = None,
     split: Optional[str] = None,
-    max_concurrent: int = 3,
+    max_concurrent: int = 15,
     save_results: bool = True
 ) -> Dict[str, Any]:
     """
@@ -1166,17 +1047,17 @@ async def process_folder(
     start_time = datetime.now()
     
     # Group files by size for optimal processing
-    small_files = []  # < 10MB
-    large_files = []  # >= 10MB
+    small_files = []  # < 50MB
+    large_files = []  # >= 50MB
     
     for file_path in all_files:
         size_mb = file_path.stat().st_size / (1024 * 1024)
-        if size_mb < 10:
+        if size_mb < 50:
             small_files.append(file_path)
         else:
             large_files.append(file_path)
     
-    logger.info(f"Processing {len(small_files)} small files (<10MB) and {len(large_files)} large files (>=10MB)")
+    logger.info(f"Processing {len(small_files)} small files (<50MB) and {len(large_files)} large files (>=50MB)")
     
     # Process small files directly in batches
     for i in range(0, len(small_files), max_concurrent):
@@ -1450,7 +1331,6 @@ async def health_check() -> Dict[str, Any]:
             "create_parse_job",
             "get_parse_job_status",
             "list_parse_jobs",
-            "download_from_url",
             "process_folder",
             "health_check"
         ],
