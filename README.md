@@ -140,9 +140,6 @@ export LANDINGAI_API_KEY="your-api-key-here"
 ### `parse_document`
 Parse documents to extract content with metadata.
 
-**Supported formats**: APNG, BMP, DCX, DDS, DIB, DOC, DOCX, GD, GIF, ICNS, JP2 (JP2000), JPEG, JPG, ODP, ODT, PCX, PDF, PNG, PPT, PPTX, PPM, PSD, TGA, TIFF, WEBP
-**See full list**: https://docs.landing.ai/ade/ade-file-types
-    
 ```python
 # Parse a local file
 result = await parse_document(
