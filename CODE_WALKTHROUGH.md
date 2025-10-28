@@ -15,12 +15,32 @@ This MCP (Model Context Protocol) server provides direct integration with Landin
 
 ```python
 API_BASE_URL = "https://api.va.landing.ai"
-API_KEY = os.environ.get("LANDINGAI_API_KEY", os.environ.get("VISION_AGENT_API_KEY"))
+API_KEY = os.environ.get("LANDINGAI_API_KEY")
 ```
 
-- API key can be set with either environment variable
+- API key must be set via LANDINGAI_API_KEY environment variable
 - All API requests use Bearer token authentication
 - Base URL points to LandingAI's Vision Agent API
+
+### Architecture: Internal Functions Pattern
+
+To solve the issue where MCP-decorated functions become FunctionTool objects that can't be called directly, the code uses an internal functions pattern:
+
+```python
+# Internal function with actual API logic
+async def _parse_document_internal(...):
+    # All the API logic here
+    
+# MCP tool is a thin wrapper
+@mcp.tool()
+async def parse_document(...):
+    return await _parse_document_internal(...)
+```
+
+This pattern allows:
+- `process_folder` to call internal functions directly
+- No code duplication between tools
+- Clean separation of API logic from MCP interface
 
 ---
 
@@ -365,6 +385,8 @@ async with httpx.AsyncClient(timeout=60.0) as client:
 
 **Purpose**: Process all supported files in a folder for parsing or structured data extraction.
 
+**Important**: This tool calls the internal functions (`_parse_document_internal`, `_extract_data_internal`, `_create_parse_job_internal`) directly to avoid FunctionTool wrapper issues.
+
 #### Input Validation
 ```python
 # Validate operation mode
@@ -424,11 +446,16 @@ for file in all_files:
 for i in range(0, len(small_files), max_concurrent):
     batch = small_files[i:i + max_concurrent]
     
-    # Create tasks based on operation
+    # Create tasks based on operation - using internal functions!
     if operation == "parse":
-        tasks = [parse_document(f) for f in batch]
+        tasks = [_parse_document_internal(str(f)) for f in batch]
     else:  # extract
-        tasks = [process_file_for_extraction(f, schema) for f in batch]
+        # Custom async function for parse + extract
+        async def parse_and_extract(fp=file_path, s=schema):
+            parse_result = await _parse_document_internal(str(fp))
+            extract_result = await _extract_data_internal(s, parse_result["markdown"])
+            return combine_results(parse_result, extract_result)
+        tasks.append(parse_and_extract())
     
     # Execute concurrently
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -436,10 +463,10 @@ for i in range(0, len(small_files), max_concurrent):
 
 4. **Large File Processing with Jobs**:
 ```python
-# Create jobs for large files
+# Create jobs for large files - using internal function!
 jobs = []
 for file in large_files:
-    job_result = await create_parse_job(file)
+    job_result = await _create_parse_job_internal(str(file))
     if job_result["status"] == "success":
         jobs.append({"file": file, "job_id": job_result["job_id"]})
 
@@ -693,6 +720,29 @@ async with httpx.AsyncClient(timeout=60.0) as fetch_client:
 
 ---
 
+## Internal Functions Architecture
+
+### Why Internal Functions?
+
+The FastMCP framework replaces MCP-decorated functions with FunctionTool objects that cannot be called directly from within Python code. To solve this, the codebase uses a pattern where:
+
+1. **Internal functions** (`_parse_document_internal`, `_extract_data_internal`, `_create_parse_job_internal`) contain all the actual API logic
+2. **MCP tools** are thin wrappers that just call the internal functions
+3. **process_folder** calls the internal functions directly, avoiding FunctionTool issues
+
+### Internal Function List
+
+- `_parse_document_internal()` - Document parsing logic
+- `_extract_data_internal()` - Data extraction logic  
+- `_create_parse_job_internal()` - Job creation logic
+
+### Benefits
+
+- **No code duplication** - Logic exists in one place
+- **Testability** - Internal functions can be tested independently
+- **Flexibility** - Any function can call internal functions
+- **Clean separation** - API logic separated from MCP interface
+
 ## Key Insights
 
 1. **Context Window Management**: The server automatically detects large responses and saves them to files, preventing Claude's context window from being overwhelmed.
@@ -706,5 +756,7 @@ async with httpx.AsyncClient(timeout=60.0) as fetch_client:
 5. **Smart Detection**: The server intelligently detects whether inputs are file paths or content strings, improving usability.
 
 6. **S3 Authentication**: Understanding that pre-signed URLs include auth in the URL itself is crucial for successful downloads.
+
+7. **Internal Functions Pattern**: Solves the FunctionTool wrapper issue by separating API logic from MCP decorators.
 
 This architecture ensures reliable document processing while managing memory efficiently and providing clear feedback throughout the process.
