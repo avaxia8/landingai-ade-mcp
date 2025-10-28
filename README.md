@@ -388,26 +388,6 @@ This means fastmcp isn't installed in the Python environment being used:
    python -c "import os; print('API Key set:', bool(os.environ.get('LANDINGAI_API_KEY')))"
    ```
 
-## Requirements
-
-- Python 3.8+
-- API key from [LandingAI](https://landing.ai)
-
-## Dependencies
-
-- `fastmcp>=0.1.0` - MCP server framework
-- `httpx>=0.24.0` - HTTP client
-- `pydantic>=2.0.0` - Data validation
-- `python-multipart>=0.0.6` - Form handling
-- `aiofiles>=23.0.0` - Async file operations
-
-## Why Local Deployment?
-
-This server runs locally to ensure:
-- **Privacy**: Your API keys and documents stay on your machine
-- **Security**: No third-party access to your data
-- **Control**: Direct management of API usage and costs
-
 ## API Documentation
 
 - [LandingAI API Reference](https://docs.landing.ai/api-reference)
