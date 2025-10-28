@@ -1,0 +1,95 @@
+# Environment variables
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
+ade-mcp-server/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.claude/
+
+# Testing
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+.coverage.*
+test_*.py
+*_test.py
+validate_*.py
+
+# Logs
+*.log
+logs/
+
+# Local data
+temp/
+tmp/
+data/
+
+# Documentation files (keep only README)
+*.md
+!README.md
+CLAUDE.md
+DEPLOYMENT.md
+
+# Images and documents
+*.pdf
+*.png
+*.jpg
+*.jpeg
+
+# FastMCP
+.fastmcp/
+
+# Backup and alternate files
+*_SDK.txt
+*_SDK.md
+*_api.txt
+*_api.py
+example_*.py
+
+# Runtime and config
+Procfile
+runtime.txt
+ant-did
+
+# Other project folders
+mcp_updated/
+landingai-ade-mcp/
+
+# uv
+.python-version
+uv.lock
