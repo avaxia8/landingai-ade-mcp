@@ -625,7 +625,44 @@ async def get_parse_job_status(job_id: str) -> Dict[str, Any]:
                         }
                 elif "output_url" in result and result["output_url"]:
                     # Results available via URL (>1MB or Zero Data Retention)
-                    result["_message"] = "Job completed. Results available at output_url (file >1MB or ZDR enabled)."
+                    output_url = result["output_url"]
+                    result["_message"] = "Job completed. Fetching results from output URL..."
+                    
+                    # Try to fetch the results from the pre-signed URL
+                    try:
+                        logger.info(f"Fetching results from output URL: {output_url}")
+                        # Use a new client without auth headers for the pre-signed URL
+                        async with httpx.AsyncClient(timeout=60.0) as fetch_client:
+                            fetch_response = await fetch_client.get(output_url)
+                            
+                            if fetch_response.status_code == 200:
+                                # Parse the fetched data
+                                fetched_data = fetch_response.json()
+                                
+                                # Add the fetched data to the result
+                                result["data"] = fetched_data
+                                result["_message"] = "Job completed. Results fetched from output URL successfully."
+                                result["_fetch_status"] = "success"
+                                
+                                # Add summary if markdown is present
+                                if isinstance(fetched_data, dict) and "markdown" in fetched_data:
+                                    result["_summary"] = {
+                                        "markdown_length": len(fetched_data["markdown"]),
+                                        "chunks_count": len(fetched_data.get("chunks", [])),
+                                        "has_splits": "splits" in fetched_data and bool(fetched_data["splits"])
+                                    }
+                            else:
+                                logger.warning(f"Failed to fetch from output URL: {fetch_response.status_code}")
+                                result["_message"] = f"Job completed. Results at output_url (fetch failed: {fetch_response.status_code})"
+                                result["_fetch_status"] = f"failed_{fetch_response.status_code}"
+                                result["_fetch_note"] = "Use the output_url directly to download results"
+                                
+                    except Exception as e:
+                        logger.error(f"Error fetching from output URL: {e}")
+                        result["_message"] = "Job completed. Results at output_url (auto-fetch failed)"
+                        result["_fetch_status"] = "error"
+                        result["_fetch_error"] = str(e)
+                        result["_fetch_note"] = "Use the output_url directly to download results"
                 else:
                     result["_message"] = "Job completed but no data available."
                     
@@ -805,6 +842,81 @@ async def list_parse_jobs(
         }
 
 @mcp.tool()
+async def download_from_url(url: str) -> Dict[str, Any]:
+    """
+    Download results from a pre-signed URL (typically from completed parse jobs).
+    
+    This is useful when you have an output_url from a completed job and want to 
+    fetch the results separately, or if auto-fetch failed.
+    
+    Args:
+        url: The pre-signed URL to download from (usually from job output_url)
+    
+    Returns:
+        The downloaded data (typically contains markdown, chunks, metadata)
+    """
+    logger.info(f"Downloading from URL: {url}")
+    
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # Don't use auth headers for pre-signed URLs
+            response = await client.get(url)
+            
+            if response.status_code == 200:
+                try:
+                    # Try to parse as JSON
+                    data = response.json()
+                    
+                    # Add summary information
+                    result = {
+                        "status": "success",
+                        "data": data,
+                        "_message": "Successfully downloaded and parsed data"
+                    }
+                    
+                    # Add summary if it's parse results
+                    if isinstance(data, dict):
+                        if "markdown" in data:
+                            result["_summary"] = {
+                                "markdown_length": len(data["markdown"]),
+                                "chunks_count": len(data.get("chunks", [])) if "chunks" in data else 0,
+                                "has_metadata": "metadata" in data
+                            }
+                        result["_keys_found"] = list(data.keys())
+                    
+                    return result
+                    
+                except json.JSONDecodeError:
+                    # Return raw content if not JSON
+                    return {
+                        "status": "success",
+                        "content": response.text[:10000],  # Limit to first 10k chars
+                        "content_type": response.headers.get("content-type", "unknown"),
+                        "_message": "Downloaded non-JSON content (showing first 10k chars)",
+                        "_full_length": len(response.text)
+                    }
+            else:
+                return {
+                    "status": "error",
+                    "error": f"Failed to download: HTTP {response.status_code}",
+                    "status_code": response.status_code,
+                    "response": response.text[:500] if response.text else None
+                }
+                
+    except httpx.TimeoutException:
+        return {
+            "status": "error",
+            "error": "Download timeout after 60 seconds"
+        }
+    except Exception as e:
+        logger.error(f"Error downloading from URL: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+
+@mcp.tool()
 async def health_check() -> Dict[str, Any]:
     """
     Check the health status of the MCP server and API connectivity.
@@ -824,6 +936,7 @@ async def health_check() -> Dict[str, Any]:
             "create_parse_job",
             "get_parse_job_status",
             "list_parse_jobs",
+            "download_from_url",
             "health_check"
         ],
         "timestamp": datetime.now().isoformat()
