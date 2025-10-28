@@ -33,7 +33,7 @@ brew install uv
 #### Set up the project
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/landingai-ade-mcp.git
+git clone https://github.com/avaxia8/landingai-ade-mcp.git
 cd landingai-ade-mcp
 
 # Install dependencies with uv
@@ -48,7 +48,7 @@ uv add fastmcp httpx pydantic python-multipart aiofiles
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/landingai-ade-mcp.git
+git clone https://github.com/avaxia8/landingai-ade-mcp.git
 cd landingai-ade-mcp
 
 # Create virtual environment
@@ -263,8 +263,9 @@ result = await process_folder(
 ### `parse_document`
 Parse documents to extract content with metadata.
 
-**Supported formats:** PDF, PNG, JPEG, DOC, DOCX, PPT, PPTX, ODP, ODT
-
+**Supported formats**: APNG, BMP, DCX, DDS, DIB, DOC, DOCX, GD, GIF, ICNS, JP2 (JP2000), JPEG, JPG, ODP, ODT, PCX, PDF, PNG, PPT, PPTX, PPM, PSD, TGA, TIFF, WEBP
+**See full list**: https://docs.landing.ai/ade/ade-file-types
+    
 ```python
 # Parse a local file
 result = await parse_document(
