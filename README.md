@@ -136,8 +136,7 @@ export LANDINGAI_API_KEY="your-api-key-here"
 
 
 ### `parse_document`
-Parse documents to extract content with metadata.
-
+Parse entire documents and return markdown output.
 ```python
 # Parse a local file
 result = await parse_document(
@@ -267,7 +266,7 @@ result = await process_folder(
 ```
 
 **Features:**
-- Automatic file size detection (uses direct parsing for <10MB, jobs for larger)
+- Automatic file size detection (uses direct parsing for <50MB, jobs for larger)
 - Concurrent processing with rate limiting
 - Progress tracking for long-running operations
 - Organized output in `ade_results` folder
