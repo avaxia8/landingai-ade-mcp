@@ -4,10 +4,9 @@ A Model Context Protocol (MCP) server providing direct integration with LandingA
 
 ## Features
 
-- 📄 **Document Parsing** - Extract text, tables, and visual elements with location data
+- 📄 **Document Parsing** - Parse entire documents and return markdown output
 - 🔍 **Data Extraction** - Extract structured data using JSON schemas
 - ⚡ **Parse Jobs** - Handle large documents with background processing
-- 🔌 **Direct API** - No SDK dependencies, full control
 - 🛡️ **Zero Data Retention** - Privacy-focused processing support
 
 ## Installation
@@ -15,7 +14,7 @@ A Model Context Protocol (MCP) server providing direct integration with LandingA
 ### Prerequisites
 
 - Python 3.9 or higher
-- LandingAI API key from [LandingAI](https://landing.ai)
+- LandingAI API key from [LandingAI](https://docs.landing.ai/ade/agentic-api-key)
 
 ### Option 1: Using uv (Recommended - Simplest)
 
@@ -69,7 +68,7 @@ pip install -r requirements.txt
 
 ### Set Your API Key
 
-Get your API key from [LandingAI](https://landing.ai)
+Get your API key from [LandingAI](https://docs.landing.ai/ade/agentic-api-key)
 
 ```bash
 export LANDINGAI_API_KEY="your-api-key-here"
@@ -133,132 +132,10 @@ export LANDINGAI_API_KEY="your-api-key-here"
 2. **Restart Claude Desktop completely** (quit and reopen)
 3. The server should appear as "landingai-ade-mcp" in your MCP servers
 
-## Troubleshooting
-
-### Common Issues and Solutions
-
-#### "Could not connect to MCP server"
-
-1. **Python not found**: Make sure the Python path in your config is correct
-   ```bash
-   # Find your Python path
-   which python3
-   ```
-
-2. **Module not found errors**: Dependencies aren't installed in the Python environment
-   - If using uv: Run `uv sync` in the project directory
-   - If using venv: Activate it and run `pip install -r requirements.txt`
-   - Check that the Python path in config matches your environment
-
-3. **spawn python ENOENT**: The system can't find Python
-   - Use the full path to Python (e.g., `/usr/bin/python3` instead of just `python`)
-   - For virtual environments, use the full path to the venv's Python
-
-#### "Server disconnected"
-
-1. **Check the server can run manually**:
-   ```bash
-   cd /path/to/landingai-ade-mcp
-   python server.py
-   # Should see: "Starting LandingAI ADE MCP Server"
-   ```
-
-2. **Check API key is set**:
-   ```bash
-   echo $LANDINGAI_API_KEY
-   ```
-
-3. **Check dependencies are installed**:
-   ```bash
-   python -c "import fastmcp, httpx, pydantic"
-   # Should complete without errors
-   ```
-
-#### "ModuleNotFoundError: No module named 'fastmcp'"
-
-This means fastmcp isn't installed in the Python environment being used:
-
-- **If using virtual environment**: The config is pointing to the wrong Python
-- **Solution**: Use uv or ensure the Python path matches your environment
-
-#### Platform-Specific Issues
-
-**macOS**: If you installed Python with Homebrew, the path might be `/opt/homebrew/bin/python3` (Apple Silicon) or `/usr/local/bin/python3` (Intel)
-
-**Windows**: Use forward slashes in paths or escape backslashes: `C:/path/to/python.exe` or `C:\\path\\to\\python.exe`
-
-**Linux**: Some systems use `python3` instead of `python`. Always use `python3` for clarity.
-
-### Debug Steps
-
-1. **Test the server standalone**:
-   ```bash
-   python server.py
-   ```
-
-2. **Check MCP communication**:
-   ```bash
-   echo '{"jsonrpc": "2.0", "method": "initialize", "id": 1}' | python server.py
-   ```
-
-3. **Verify configuration**:
-   - Open Claude Desktop developer settings
-   - Check the logs for specific error messages
-   - Ensure all paths are absolute, not relative
-
-4. **Validate API key**:
-   ```bash
-   python -c "import os; print('API Key set:', bool(os.environ.get('LANDINGAI_API_KEY')))"
-   ```
 
 ## Available Tools
 
-### `process_folder`
-Process all supported files in a folder - parse documents or extract structured data.
 
-**Supported formats:** 
-- Images: APNG, BMP, DCX, DDS, DIB, GD, GIF, ICNS, JP2, JPEG, JPG, PCX, PNG, PPM, PSD, TGA, TIFF, WEBP
-- Documents: PDF, DOC, DOCX, PPT, PPTX, ODP, ODT
-
-```python
-# Parse all PDFs in a folder
-result = await process_folder(
-    folder_path="/path/to/documents",
-    operation="parse",  # or "extract" for structured data
-    file_types="pdf",   # optional filter
-    model="dpt-2-latest"
-)
-
-# Extract structured data from all documents
-schema = {
-    "type": "object",
-    "properties": {
-        "invoice_number": {"type": "string"},
-        "total": {"type": "number"},
-        "date": {"type": "string"}
-    }
-}
-
-result = await process_folder(
-    folder_path="/path/to/invoices",
-    operation="extract",
-    schema=schema,
-    file_types="pdf,jpg"  # Process PDFs and images
-)
-
-# Process everything with defaults
-result = await process_folder(
-    folder_path="/path/to/mixed_documents"
-)
-```
-
-**Features:**
-- Automatic file size detection (uses direct parsing for <10MB, jobs for larger)
-- Concurrent processing with rate limiting
-- Progress tracking for long-running operations
-- Organized output in `ade_results` folder
-- Aggregated data for extraction operations
-- Continues processing even if individual files fail
 
 ### `parse_document`
 Parse documents to extract content with metadata.
@@ -355,6 +232,52 @@ jobs = await list_parse_jobs(
     status="completed"  # optional filter
 )
 ```
+### `process_folder`
+Process all supported files in a folder - parse documents or extract structured data.
+
+**Supported formats:** 
+- Images: APNG, BMP, DCX, DDS, DIB, GD, GIF, ICNS, JP2, JPEG, JPG, PCX, PNG, PPM, PSD, TGA, TIFF, WEBP
+- Documents: PDF, DOC, DOCX, PPT, PPTX, ODP, ODT
+
+```python
+# Parse all PDFs in a folder
+result = await process_folder(
+    folder_path="/path/to/documents",
+    operation="parse",  # or "extract" for structured data
+    file_types="pdf",   # optional filter
+    model="dpt-2-latest"
+)
+
+# Extract structured data from all documents
+schema = {
+    "type": "object",
+    "properties": {
+        "invoice_number": {"type": "string"},
+        "total": {"type": "number"},
+        "date": {"type": "string"}
+    }
+}
+
+result = await process_folder(
+    folder_path="/path/to/invoices",
+    operation="extract",
+    schema=schema,
+    file_types="pdf,jpg"  # Process PDFs and images
+)
+
+# Process everything with defaults
+result = await process_folder(
+    folder_path="/path/to/mixed_documents"
+)
+```
+
+**Features:**
+- Automatic file size detection (uses direct parsing for <10MB, jobs for larger)
+- Concurrent processing with rate limiting
+- Progress tracking for long-running operations
+- Organized output in `ade_results` folder
+- Aggregated data for extraction operations
+- Continues processing even if individual files fail
 
 ### `health_check`
 Check server status and API connectivity.
@@ -512,6 +435,84 @@ else:
 - `422`: Validation error
 - `429`: Rate limit exceeded
 
+## Troubleshooting
+
+### Common Issues and Solutions
+
+#### "Could not connect to MCP server"
+
+1. **Python not found**: Make sure the Python path in your config is correct
+   ```bash
+   # Find your Python path
+   which python3
+   ```
+
+2. **Module not found errors**: Dependencies aren't installed in the Python environment
+   - If using uv: Run `uv sync` in the project directory
+   - If using venv: Activate it and run `pip install -r requirements.txt`
+   - Check that the Python path in config matches your environment
+
+3. **spawn python ENOENT**: The system can't find Python
+   - Use the full path to Python (e.g., `/usr/bin/python3` instead of just `python`)
+   - For virtual environments, use the full path to the venv's Python
+
+#### "Server disconnected"
+
+1. **Check the server can run manually**:
+   ```bash
+   cd /path/to/landingai-ade-mcp
+   python server.py
+   # Should see: "Starting LandingAI ADE MCP Server"
+   ```
+
+2. **Check API key is set**:
+   ```bash
+   echo $LANDINGAI_API_KEY
+   ```
+
+3. **Check dependencies are installed**:
+   ```bash
+   python -c "import fastmcp, httpx, pydantic"
+   # Should complete without errors
+   ```
+
+#### "ModuleNotFoundError: No module named 'fastmcp'"
+
+This means fastmcp isn't installed in the Python environment being used:
+
+- **If using virtual environment**: The config is pointing to the wrong Python
+- **Solution**: Use uv or ensure the Python path matches your environment
+
+#### Platform-Specific Issues
+
+**macOS**: If you installed Python with Homebrew, the path might be `/opt/homebrew/bin/python3` (Apple Silicon) or `/usr/local/bin/python3` (Intel)
+
+**Windows**: Use forward slashes in paths or escape backslashes: `C:/path/to/python.exe` or `C:\\path\\to\\python.exe`
+
+**Linux**: Some systems use `python3` instead of `python`. Always use `python3` for clarity.
+
+### Debug Steps
+
+1. **Test the server standalone**:
+   ```bash
+   python server.py
+   ```
+
+2. **Check MCP communication**:
+   ```bash
+   echo '{"jsonrpc": "2.0", "method": "initialize", "id": 1}' | python server.py
+   ```
+
+3. **Verify configuration**:
+   - Open Claude Desktop developer settings
+   - Check the logs for specific error messages
+   - Ensure all paths are absolute, not relative
+
+4. **Validate API key**:
+   ```bash
+   python -c "import os; print('API Key set:', bool(os.environ.get('LANDINGAI_API_KEY')))"
+   ```
+
 ## Requirements
 
 - Python 3.8+
@@ -536,9 +537,3 @@ This server runs locally to ensure:
 
 - [LandingAI API Reference](https://docs.landing.ai/api-reference)
 - [Supported File Types](https://docs.landing.ai/ade/ade-file-types)
-
-
-## Support
-
-- Issues: [GitHub Issues](https://github.com/yourusername/landingai-ade-mcp)
-- LandingAI Support: support@landing.ai
