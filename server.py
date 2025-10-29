@@ -191,9 +191,6 @@ async def _parse_document_internal(
             
             # Always save parsed markdown to local directory
             if "markdown" in result:
-                from datetime import datetime
-                from pathlib import Path
-                
                 # Create persistent output directory
                 output_dir = Path.home() / "landingai_ade_output"
                 output_dir.mkdir(exist_ok=True)
@@ -392,9 +389,6 @@ async def _extract_data_internal(
                 logger.info("Data extraction successful")
                 
                 # Always save extraction results to local directory
-                from datetime import datetime
-                from pathlib import Path
-                
                 # Create persistent output directory
                 output_dir = Path.home() / "landingai_ade_output"
                 output_dir.mkdir(exist_ok=True)
@@ -747,10 +741,6 @@ async def get_parse_job_status(job_id: str) -> Dict[str, Any]:
                                 if isinstance(fetched_data, dict) and "markdown" in fetched_data:
                                     markdown_content = fetched_data["markdown"]
                                     markdown_length = len(markdown_content)
-                                    
-                                    from datetime import datetime
-                                    import os
-                                    from pathlib import Path
                                     
                                     # Create persistent output directory
                                     output_dir = Path.home() / "landingai_ade_output"
