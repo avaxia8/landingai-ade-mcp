@@ -141,7 +141,7 @@ async def _parse_document_internal(
         }
     
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             if document_path:
                 # Check if file exists
                 path = Path(document_path)
@@ -306,7 +306,7 @@ async def _extract_data_internal(
             }
         
         # Prepare and send request based on input type
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             if markdown is not None:
                 # Check if markdown is a file path or content string
                 is_file = False
@@ -406,7 +406,6 @@ async def _extract_data_internal(
                 output_file = str(output_dir / f"extract_{source_filename}_{timestamp}.json")
                 
                 # Write extraction results to file
-                import json
                 with open(output_file, 'w', encoding='utf-8') as f:
                     json.dump(result.get('extraction', {}), f, indent=2)
                 
@@ -1118,23 +1117,38 @@ async def process_folder(
     
     logger.info(f"Processing {len(small_files)} small files (<50MB) and {len(large_files)} large files (>=50MB)")
     
+    # Track progress
+    total_processed = 0
+    total_files = len(all_files)
+    
     # Process small files directly in batches
     for i in range(0, len(small_files), max_concurrent):
         batch = small_files[i:i + max_concurrent]
+        batch_start = i + 1
+        batch_end = min(i + len(batch), len(small_files))
+        
+        print(f"\n=== Processing batch {batch_start}-{batch_end} of {len(small_files)} small files ===")
+        logger.info(f"Starting batch: files {batch_start} to {batch_end}")
+        
         tasks = []
         
-        for file_path in batch:
+        for j, file_path in enumerate(batch, 1):
+            file_num = i + j
+            print(f"[{file_num}/{len(small_files)}] Starting: {file_path.name} ({file_path.stat().st_size / (1024*1024):.1f}MB)")
+            logger.info(f"Processing file {file_num}/{len(small_files)}: {file_path.name}")
             if operation == "parse":
                 tasks.append(_parse_document_internal(document_path=str(file_path), model=model, split=split))
             else:  # extract
                 # For extraction, we need to parse first then extract
-                async def parse_and_extract(fp=file_path, s=schema, m=model, sp=split):
+                async def parse_and_extract(fp=file_path, s=schema, m=model, sp=split, file_idx=file_num, total=len(small_files)):
+                    print(f"[{file_idx}/{total}] Parsing {fp.name} for extraction...")
                     parse_result = await _parse_document_internal(document_path=str(fp), model=m, split=sp)
                     if parse_result.get("status") == "error":
                         return parse_result
                     markdown = parse_result.get("markdown", "")
                     if not markdown:
                         return {"status": "error", "error": "No markdown content to extract from"}
+                    print(f"[{file_idx}/{total}] Extracting structured data from {fp.name}...")
                     extract_result = await _extract_data_internal(schema=s, markdown=markdown)
                     if extract_result.get("status") == "success":
                         return {
@@ -1147,17 +1161,23 @@ async def process_folder(
                 tasks.append(parse_and_extract())
         
         # Execute batch concurrently
+        print(f"Executing batch of {len(tasks)} operations concurrently...")
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # Process results
-        for file_path, result in zip(batch, results):
+        for idx, (file_path, result) in enumerate(zip(batch, results), 1):
+            total_processed += 1
+            file_num = i + idx
+            progress_pct = (total_processed / total_files) * 100
             if isinstance(result, Exception):
+                print(f"[{file_num}/{len(small_files)}] ❌ FAILED: {file_path.name} - Error: {result}")
                 failed_files.append({
                     "filename": file_path.name,
                     "error": str(result)
                 })
                 logger.error(f"Failed to process {file_path.name}: {result}")
             elif result.get("status") == "error":
+                print(f"[{file_num}/{len(small_files)}] ❌ FAILED: {file_path.name} - {result.get('error', 'Unknown error')}")
                 failed_files.append({
                     "filename": file_path.name,
                     "error": result.get("error", "Unknown error")
@@ -1204,6 +1224,7 @@ async def process_folder(
                                 result["markdown"], encoding="utf-8"
                             )
                 
+                print(f"[{file_num}/{len(small_files)}] ✓ SUCCESS: {file_path.name} (Progress: {progress_pct:.1f}%)")
                 processed_files.append({
                     "filename": file_path.name,
                     "status": "success",
@@ -1214,11 +1235,13 @@ async def process_folder(
     
     # Process large files using parse jobs
     if large_files:
+        print(f"\n=== Processing {len(large_files)} large files (>=50MB) using async jobs ===")
         logger.info(f"Creating parse jobs for {len(large_files)} large files")
         jobs = []
         
         # Create jobs for large files
-        for file_path in large_files:
+        for idx, file_path in enumerate(large_files, 1):
+            print(f"[{idx}/{len(large_files)}] Creating parse job for: {file_path.name} ({file_path.stat().st_size / (1024*1024):.1f}MB)")
             try:
                 job_result = await _create_parse_job_internal(
                     document_path=str(file_path),
@@ -1226,16 +1249,19 @@ async def process_folder(
                     split=split
                 )
                 if job_result.get("status") == "success":
+                    print(f"[{idx}/{len(large_files)}] ✓ Job created: {job_result['job_id']} for {file_path.name}")
                     jobs.append({
                         "file_path": file_path,
                         "job_id": job_result["job_id"]
                     })
                 else:
+                    print(f"[{idx}/{len(large_files)}] ❌ Failed to create job for {file_path.name}: {job_result.get('error')}")
                     failed_files.append({
                         "filename": file_path.name,
                         "error": job_result.get("error", "Failed to create parse job")
                     })
             except Exception as e:
+                print(f"[{idx}/{len(large_files)}] ❌ Exception creating job for {file_path.name}: {e}")
                 failed_files.append({
                     "filename": file_path.name,
                     "error": str(e)
@@ -1243,18 +1269,29 @@ async def process_folder(
         
         # Monitor jobs until completion
         if jobs:
+            print(f"\nMonitoring {len(jobs)} parse jobs for completion...")
             logger.info(f"Monitoring {len(jobs)} parse jobs...")
             pending_jobs = jobs.copy()
+            completed_jobs = 0
+            check_count = 0
             
             while pending_jobs:
                 await asyncio.sleep(5)  # Check every 5 seconds
+                check_count += 1
+                
+                print(f"\n[Check #{check_count}] Checking status of {len(pending_jobs)} pending jobs...")
                 
                 for job in pending_jobs[:]:
                     try:
                         status_result = await get_parse_job_status(job["job_id"])
+                        job_status = status_result.get("status", "unknown")
                         
-                        if status_result.get("status") == "completed":
+                        if job_status == "completed":
+                            completed_jobs += 1
                             pending_jobs.remove(job)
+                            total_processed += 1
+                            progress_pct = (total_processed / total_files) * 100
+                            print(f"  ✓ Job completed: {job['file_path'].name} (Overall progress: {progress_pct:.1f}%)")
                             
                             # Process based on operation
                             if operation == "extract" and status_result.get("data"):
@@ -1306,18 +1343,30 @@ async def process_folder(
                                 "job_id": job["job_id"],
                                 "output_path": output_path
                             })
+                            print(f"    Saved results for {job['file_path'].name} to {output_path if output_path else 'memory'}")
                             
-                        elif status_result.get("status") == "failed":
+                        elif job_status == "processing":
+                            progress = status_result.get("progress", 0) * 100
+                            print(f"  ⏳ Processing: {job['file_path'].name} - {progress:.0f}% complete")
+                        elif job_status == "failed":
+                            completed_jobs += 1
                             pending_jobs.remove(job)
+                            total_processed += 1
+                            print(f"  ❌ Job failed: {job['file_path'].name} - {status_result.get('failure_reason', 'Job failed')}")
                             failed_files.append({
                                 "filename": job["file_path"].name,
                                 "error": status_result.get("failure_reason", "Job failed")
                             })
                     except Exception as e:
+                        print(f"  ⚠️  Error checking job {job['job_id']}: {e}")
                         logger.error(f"Error checking job {job['job_id']}: {e}")
+                        # Keep in pending to retry
                 
                 if pending_jobs:
+                    print(f"\nStill waiting for {len(pending_jobs)} jobs to complete... ({completed_jobs}/{len(jobs)} done)")
                     logger.info(f"Still waiting for {len(pending_jobs)} jobs to complete...")
+                else:
+                    print(f"\nAll {len(jobs)} parse jobs completed!")
     
     # Calculate summary
     processing_time = (datetime.now() - start_time).total_seconds()
@@ -1346,6 +1395,16 @@ async def process_folder(
         (output_dir / "summary.json").write_text(
             json.dumps(summary, indent=2), encoding="utf-8"
         )
+    
+    # Print final summary
+    print(f"\n{'='*60}")
+    print(f"PROCESSING COMPLETE")
+    print(f"{'='*60}")
+    print(f"✅ Successfully processed: {len(processed_files)} files")
+    print(f"❌ Failed: {len(failed_files)} files")
+    print(f"⏱️  Total time: {processing_time:.1f} seconds")
+    print(f"📁 Results saved to: {output_dir if save_results else 'Not saved'}")
+    print(f"{'='*60}\n")
     
     # Prepare response
     result = {
