@@ -406,7 +406,6 @@ async def _extract_data_internal(
                 output_file = str(output_dir / f"extract_{source_filename}_{timestamp}.json")
                 
                 # Write extraction results to file
-                import json
                 with open(output_file, 'w', encoding='utf-8') as f:
                     json.dump(result.get('extraction', {}), f, indent=2)
                 
@@ -720,13 +719,11 @@ async def get_parse_job_status(job_id: str) -> Dict[str, Any]:
                     # Results available via URL (>1MB or Zero Data Retention)
                     output_url = result["output_url"]
                     logger.info(f"Output URL found: {output_url}")
-                    print(f"📎 Output URL: {output_url}")
                     result["_message"] = f"Job completed. Output URL: {output_url}"
                     
                     # Try to fetch the results from the pre-signed URL
                     try:
                         logger.info(f"Fetching results from output URL...")
-                        print(f"📥 Downloading from URL...")
                         
                         # Use a new client without auth headers for the pre-signed URL
                         async with httpx.AsyncClient(timeout=60.0) as fetch_client:
@@ -763,7 +760,6 @@ async def get_parse_job_status(job_id: str) -> Dict[str, Any]:
                                     
                                     file_size_mb = markdown_length / (1024 * 1024)
                                     logger.info(f"Large result saved to: {output_file} ({file_size_mb:.2f} MB)")
-                                    print(f"💾 Large result saved to: {output_file} ({file_size_mb:.2f} MB)")
                                     
                                     # Return file info instead of full content
                                     result["data_file"] = output_file
